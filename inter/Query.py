@@ -14,10 +14,11 @@ class query:
     查询接口
     """
 
-    def __init__(self, session, from_station, to_station, from_station_h, to_station_h, _station_seat, station_trains,
+    def __init__(self, selectObj, from_station, to_station, from_station_h, to_station_h, _station_seat, station_trains,
                  ticke_peoples_num, station_dates=None, ):
-        self.session = session
+        self.session = selectObj
         self.httpClint = HTTPClient(TickerConfig.IS_PROXY)
+        self.httpClint.set_cookies(self.session.cookies)
         self.urls = urlConf.urls
         self.from_station = from_station
         self.to_station = to_station
@@ -47,16 +48,23 @@ class query:
         return seat[index]
 
     def check_is_need_train(self, ticket_info):
-        return ticket_info[3] in self.station_trains
+        """
+        判断车次是否为想要的车次，如果ticket_info为空，那么就不校验车次，直接返回True
+        :param ticket_info:
+        :return:
+        """
+        if self.station_dates and self.station_trains:
+            return ticket_info[3] in self.station_trains
+        else:
+            return True
 
     def sendQuery(self):
         """
         查询
         :return:
         """
-        if TickerConfig.IS_CDN == 1:
-            if self.session.cdn_list:
-                self.httpClint.cdn = self.session.cdn_list[random.randint(0, len(self.session.cdn_list) - 1)]
+        if TickerConfig.IS_CDN == 1 and self.session.cdn_list:
+            self.httpClint.cdn = self.session.cdn_list[random.randint(4, len(self.session.cdn_list) - 1)]
         for station_date in self.station_dates:
             select_url = copy.copy(self.urls["select_url"])
             select_url["req_url"] = select_url["req_url"].format(station_date, self.from_station, self.to_station,
@@ -110,14 +118,14 @@ class query:
                                                                                             self.to_station_h,
                                                                                             seat_conf_2[j],
                                                                                             ticket_num))
-                                        if seat_conf_2[j] == "无座" and ticket_info[3][0] in ["G", "D"]:
+                                        if seat_conf_2[j] == "无座" and ticket_info[3][0] in ["G", "D", "C"]:
                                             seat = 30  # GD开头的无座直接强制改为二等座车次
                                         if wrapcache.get(train_no):
                                             print(ticket.QUERY_IN_BLACK_LIST.format(train_no))
                                             continue
                                         else:
                                             if ticket_num != "有" and self.ticke_peoples_num > ticket_num:
-                                                if self.session.is_more_ticket:
+                                                if TickerConfig.IS_MORE_TICKET:
                                                     print(
                                                         u"余票数小于乘车人数，当前余票数: {}, 删减人车人数到: {}".format(ticket_num, ticket_num))
                                                     is_more_ticket_num = ticket_num
@@ -143,24 +151,34 @@ class query:
                                                 "cdn": self.httpClint.cdn,
                                                 "status": True,
                                             }
-                                elif is_ticket_pass == '无' and ticket_info[-2] == "1" and TickerConfig.TICKET_TYPE is 2:
+                                elif is_ticket_pass == '无' and ticket_info[37] == "1" and TickerConfig.TICKET_TYPE is 2:
                                     """
                                     is_ticket_pass如果有别的显示，但是可以候补，可以提issues提出来，附上query log，我将添加上
                                     判断车次是否可以候补
                                     目前的候补机制是只要一有候补位置，立马提交候补
                                     """
                                     # 如果最后一位为1，则是可以候补的，不知道这些正确嘛？
-                                    nate = list(ticket_info[-1])
+                                    nate = list(ticket_info[38])
                                     if wrapcache.get(f"hb{ticket_info[2]}"):
                                         continue
                                     for set_type in TickerConfig.SET_TYPE:
                                         if TickerConfig.PASSENGER_TICKER_STR[set_type] not in nate:
-                                            return {
-                                                "secretList": ticket_info[0],
-                                                "seat": [set_type],
-                                                "train_no": ticket_info[2],
-                                                "status": True,
-                                            }
+                                            if ticket_info[3][0] in ["G", "D", "C"] and set_type in ["一等座", "特等座", "二等座", "商务座", "无座"]:
+                                                return {
+                                                    "secretList": ticket_info[0],
+                                                    "seat": [set_type],
+                                                    "train_no": ticket_info[2],
+                                                    "status": True,
+                                                    "cdn": self.httpClint.cdn,
+                                                }
+                                            elif ticket_info[3][0] in ["T", "Z", "K"] and set_type in ["硬卧", "硬座", "无座", "软座", "软卧"]:
+                                                return {
+                                                    "secretList": ticket_info[0],
+                                                    "seat": [set_type],
+                                                    "train_no": ticket_info[2],
+                                                    "status": True,
+                                                    "cdn": self.httpClint.cdn,
+                                                }
                 else:
                     print(u"车次配置信息有误，或者返回数据异常，请检查 {}".format(station_ticket))
         self.session.flag = False

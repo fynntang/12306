@@ -1,10 +1,12 @@
 # -*- coding: utf8 -*-
 import json
+import random
 import socket
 from collections import OrderedDict
 from time import sleep
 import requests
-
+from fake_useragent import UserAgent
+import TickerConfig
 from agency.agency_tools import proxy
 from config import logger
 
@@ -14,22 +16,35 @@ def _set_header_default():
     # header_dict["Accept"] = "application/json, text/plain, */*"
     header_dict["Accept-Encoding"] = "gzip, deflate"
     header_dict[
-        "User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"
+        "User-Agent"] = _set_user_agent()
     header_dict["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
     header_dict["Origin"] = "https://kyfw.12306.cn"
     header_dict["Connection"] = "keep-alive"
     return header_dict
 
 
+def _set_user_agent():
+    # try:
+    #     user_agent = UserAgent(verify_ssl=False).random
+    #     return user_agent
+    # except:
+    #     print("请求头设置失败，使用默认请求头")
+    #     return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.' + str(
+    #         random.randint(5000, 7000)) + '.0 Safari/537.36'
+    return "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"
+
+
 class HTTPClient(object):
 
-    def __init__(self, is_proxy):
+    def __init__(self, is_proxy, cdnList=None):
         """
+        cdnList试试切换不包括查询的cdn，防止查询cdn污染登陆和下单cdn
         :param method:
         :param headers: Must be a dict. Such as headers={'Content_Type':'text/html'}
         """
         self.initS()
         self._cdn = None
+        self.cdnList = cdnList
         self._proxies = None
         if is_proxy is 1:
             self.proxy = proxy()
@@ -87,6 +102,12 @@ class HTTPClient(object):
         self._s.headers.update({"Host": host})
         return self
 
+    def setHeadersUserAgent(self):
+        self._s.headers.update({"User-Agent": _set_user_agent()})
+
+    def getHeadersUserAgent(self):
+        return self._s.headers["User-Agent"]
+
     def getHeadersReferer(self):
         return self._s.headers["Referer"]
 
@@ -118,10 +139,12 @@ class HTTPClient(object):
         else:
             method = "get"
             self.resetHeaders()
+        if TickerConfig.RANDOM_AGENT is 1:
+            self.setHeadersUserAgent()
         self.setHeadersReferer(urls["Referer"])
         if is_logger:
             logger.log(
-                u"url: {0}\n入参: {1}\n请求方式: {2}\n".format(req_url, data, method, ))
+                u"url: {0}\n入参: {1}\n请求方式: {2}\n".format(req_url, data, method))
         self.setHeadersHost(urls["Host"])
         if is_test_cdn:
             url_host = self._cdn
@@ -143,7 +166,7 @@ class HTTPClient(object):
                 except:
                     pass
                 response = self._s.request(method=method,
-                                           timeout=2,
+                                           timeout=5,
                                            proxies=self._proxies,
                                            url=http + "://" + url_host + req_url,
                                            data=data,
@@ -158,13 +181,19 @@ class HTTPClient(object):
                             logger.log(
                                 u"出参：{0}".format(response.content.decode()))
                         if urls["is_json"]:
-                            return json.loads(response.content.decode() if isinstance(response.content, bytes) else response.content)
+                            return json.loads(
+                                response.content.decode() if isinstance(response.content, bytes) else response.content)
                         else:
-                            return response.content.decode("utf8", "ignore") if isinstance(response.content, bytes) else response.content
+                            return response.content.decode("utf8", "ignore") if isinstance(response.content,
+                                                                                           bytes) else response.content
                     else:
                         print(f"url: {urls['req_url']}返回参数为空, 接口状态码: {response.status_code}")
+
                         logger.log(
                             u"url: {} 返回参数为空".format(urls["req_url"]))
+                        if self.cdnList:
+                            # 如果下单或者登陆出现cdn 302的情况，立马切换cdn
+                            url_host = self.cdnList.pop(random.randint(0, 4))
                         continue
                 else:
                     sleep(urls["re_time"])
